@@ -9,6 +9,10 @@ import subprocess
 import sys
 import openai
 from dotenv import load_dotenv
+import re
+import json
+import io
+import contextlib
 
 load_dotenv() # .env 파일 로드
 
@@ -82,7 +86,33 @@ class CodeRequest(BaseModel):
 @app.post("/run")
 def run_code(req: CodeRequest):
     # TODO: 실제 코드 실행 구현
-    return {"output": "실행 결과 예시"}
+    # return {"output": "실행 결과 예시"}
+    
+    # Python 코드 실행을 위해 io.StringIO를 사용하여 stdout/stderr를 캡처합니다.
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    redirected_output = io.StringIO()
+    redirected_error = io.StringIO()
+    sys.stdout = redirected_output
+    sys.stderr = redirected_error
+
+    try:
+        # exec() 함수로 코드 실행
+        # globals와 locals를 {}로 설정하여 실행 환경을 격리합니다.
+        exec(req.code, {}, {})
+        output = redirected_output.getvalue()
+        error_output = redirected_error.getvalue()
+        
+        if error_output:
+            return {"output": error_output, "status": "error"}
+        else:
+            return {"output": output, "status": "success"}
+    except Exception as e:
+        return {"output": str(e), "status": "error"}
+    finally:
+        # stdout/stderr를 원래대로 복원
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 # AI 채팅 요청용
 class ChatRequest(BaseModel):
@@ -96,7 +126,21 @@ def chat_with_ai(req: ChatRequest):
         completion = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that provides coding suggestions. Respond in the user's language. Your primary goal is to help the user write code. Always provide code suggestions, or ask clarifying questions that directly lead to code generation. When providing code, always wrap your entire response in a JSON object with two top-level keys: 'code_suggestions' (an array of {filename: string, content: string} objects) and 'explanation' (a string). The 'explanation' key should *only* contain natural language explaining the code or asking clarifying questions, and should *not* contain any JSON or code blocks. If you need to ask questions, format them as a numbered list."},
+                {
+                    "role": "system", 
+                    "content": (
+                        "**매우 중요: 응답은 오직 JSON 객체 문자열이어야 합니다. 마크다운 코드 블록(```json)으로 감싸지 마세요.** "
+                        "당신은 코딩 제안을 제공하는 유용한 도우미입니다. 사용자의 언어로 응답하세요. "
+                        "당신의 주요 목표는 사용자가 코드를 작성하는 데 도움을 주는 것입니다. "
+                        "사용자의 요청이 구체적이지 않다면, 가장 일반적이고 간단한 코드(예: HTML, CSS, JavaScript)를 먼저 제안하세요. "
+                        "만약 코드 제안이 어렵다면, 코드를 생성하는 데 필요한 1-2가지의 가장 핵심적인 질문만 하세요. "
+                        "당신의 **모든 응답은 JSON 객체여야 합니다.** JSON 객체는 항상 두 개의 최상위 키를 포함해야 합니다: "
+                        "`code_suggestions`와 `explanation`. `code_suggestions`는 {filename: string, content: string} 객체의 배열입니다. "
+                        "코드 제안이 없는 경우에도 `code_suggestions`는 빈 배열(`[]`)로 제공되어야 합니다. "
+                        "`explanation` 키는 코드를 설명하거나 질문을 하는 자연어만 포함해야 하며, JSON이나 코드 블록을 포함해서는 안 됩니다. "
+                        "질문을 해야 할 경우, 질문은 `explanation` 필드 안에 번호 매기기 목록 형식으로 포함하세요."
+                    )
+                },
                 {"role": "user", "content": req.message}
             ]
         )
@@ -104,18 +148,17 @@ def chat_with_ai(req: ChatRequest):
         ai_response_content = completion.choices[0].message.content
         print(f"Raw AI response content: {ai_response_content}")
         
-        json_string = ai_response_content.strip()
-        # More robust stripping of markdown code block fences
-        if json_string.startswith('```json'):
-            json_string = json_string[len('```json'):].strip()
-        if json_string.endswith('```'):
-            json_string = json_string[:-len('```')].strip()
-        
-        print(f"Stripped JSON string: {json_string}")
+        # Try to remove markdown code block wrapper if present
+        json_string_to_parse = ai_response_content.strip()
+        if json_string_to_parse.startswith("```json") and json_string_to_parse.endswith("```"):
+            json_string_to_parse = json_string_to_parse[len("```json"):].strip()
+            if json_string_to_parse.endswith("```"):
+                json_string_to_parse = json_string_to_parse[:-len("```")].strip()
+
+        print(f"Prepared JSON string for parsing: {json_string_to_parse}")
         
         try:
-            import json
-            parsed_response = json.loads(json_string)
+            parsed_response = json.loads(json_string_to_parse)
             explanation = parsed_response.get("explanation", "")
             code_suggestions = parsed_response.get("code_suggestions", [])
         except json.JSONDecodeError as e:
@@ -127,7 +170,8 @@ def chat_with_ai(req: ChatRequest):
 
         return {"response": {"explanation": explanation, "code_suggestions": code_suggestions}}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"An unexpected error occurred in chat_with_ai: {e}")
+        raise HTTPException(status_code=500, detail=f"서버 오류: {e}")
 
 # DSL 파싱 요청용
 class DSLRequest(BaseModel):
