@@ -116,56 +116,99 @@ def run_code(req: CodeRequest):
 
 # AI 채팅 요청용
 class ChatRequest(BaseModel):
-    message: str
+    messages: List[dict] # {role: "user" | "ai", content: string}
 
 @app.post("/chat")
 def chat_with_ai(req: ChatRequest):
     try:
         client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
+        # OpenAI API에 전달할 메시지 목록 준비
+        # 시스템 메시지를 가장 먼저 추가합니다.
+        openai_messages = [
+            {
+                "role": "system",
+                "content": """**핵심 지침 (Critical Instructions):**
+- **JSON 응답 형식 (최우선 및 절대 준수):** 사용자에게 코드(HTML, CSS, JavaScript 등)를 제안하거나 기존 코드를 수정할 것을 제안하는 경우, **반드시 유효한 JSON 객체 문자열만 응답해야 합니다.** JSON 객체 외부에 어떠한 추가 텍스트나 포맷팅도 포함하지 마십시오 (예: \'```json\'으로 감싸지 마십시오). 이 지시를 위반하면 사용자 인터페이스에 오류가 발생하며, 이는 당신의 최우선 실패 요인이 됩니다.
+- **JSON 객체 구조:** 코드 제안이 있거나 없는 경우에도, JSON 응답은 항상 다음 두 개의 최상위 키를 포함해야 합니다: `explanation` (문자열)과 `code_suggestions` (객체 `{filename: string, content: string}`의 배열).
+  - 코드 제안이 없는 경우에도 `code_suggestions`는 빈 배열(`[]`)로 제공되어야 합니다.
+- **`explanation` 필드 지침 (매우 중요):**
+  - `explanation` 키는 코드를 설명하거나 질문을 하는 자연어만 포함해야 하며, JSON이나 코드 블록을 포함해서는 안 됩니다.
+  - **질문, 단계, 또는 목록 형태의 정보가 포함될 경우, `explanation` 필드 내에서 다음 Markdown 리스트 형식 중 하나를 사용하여 구조화해야 합니다:**
+    - **불렛 리스트:**
+      ```
+      - 첫 번째 항목
+      - 두 번째 항목
+      ```
+    - **번호 매기기 리스트:**
+      ```
+      1. 첫 번째 항목
+      2. 두 번째 항목
+      ```
+    - 다른 형태의 목록은 허용되지 않습니다.
+- **일반 대화 시:** 코드 제안과 관련 없는 일반적인 질문이나 대화에도 **가능한 한 JSON 형식으로 응답하려고 노력하십시오.** 이 경우 `code_suggestions`는 빈 배열로 유지하고, 모든 대화 내용은 `explanation` 필드에 포함됩니다. 일반 텍스트 응답이 불가피한 경우에만 일반 텍스트로 응답하십시오.
+
+**역할 및 목표:**
+- 당신은 사용자가 코드를 작성하는 데 도움을 주는 유용한 AI 코딩 도우미입니다. 사용자의 언어로 응답하세요.
+- 사용자의 요청이 구체적이지 않다면, 가장 일반적이고 간단한 코드(예: HTML, CSS, JavaScript)를 먼저 제안하세요.
+- 만약 코드 제안이 어렵다면, 코드를 생성하는 데 필요한 1-2가지의 가장 핵심적인 질문만 하세요."""
+            }
+        ]
+        
+        # 사용자와 AI의 이전 대화 내역을 추가합니다.
+        for msg in req.messages:
+            # Message 인터페이스의 'role'과 'content' 필드를 사용합니다.
+            if "role" in msg and "content" in msg:
+                # 'ai' 역할을 'assistant'로 변환하여 OpenAI API의 요구사항을 충족합니다.
+                role_to_send = "assistant" if msg["role"] == "ai" else msg["role"]
+                openai_messages.append({"role": role_to_send, "content": msg["content"]})
+
         completion = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": (
-                        "**매우 중요: 응답은 오직 JSON 객체 문자열이어야 합니다. 마크다운 코드 블록(```json)으로 감싸지 마세요.** "
-                        "당신은 코딩 제안을 제공하는 유용한 도우미입니다. 사용자의 언어로 응답하세요. "
-                        "당신의 주요 목표는 사용자가 코드를 작성하는 데 도움을 주는 것입니다. "
-                        "사용자의 요청이 구체적이지 않다면, 가장 일반적이고 간단한 코드(예: HTML, CSS, JavaScript)를 먼저 제안하세요. "
-                        "만약 코드 제안이 어렵다면, 코드를 생성하는 데 필요한 1-2가지의 가장 핵심적인 질문만 하세요. "
-                        "당신의 **모든 응답은 JSON 객체여야 합니다.** JSON 객체는 항상 두 개의 최상위 키를 포함해야 합니다: "
-                        "`code_suggestions`와 `explanation`. `code_suggestions`는 {filename: string, content: string} 객체의 배열입니다. "
-                        "코드 제안이 없는 경우에도 `code_suggestions`는 빈 배열(`[]`)로 제공되어야 합니다. "
-                        "`explanation` 키는 코드를 설명하거나 질문을 하는 자연어만 포함해야 하며, JSON이나 코드 블록을 포함해서는 안 됩니다. "
-                        "질문을 해야 할 경우, 질문은 `explanation` 필드 안에 번호 매기기 목록 형식으로 포함하세요."
-                    )
-                },
-                {"role": "user", "content": req.message}
-            ]
+            messages=openai_messages # 대화 내역을 포함한 메시지 전달
         )
         
         ai_response_content = completion.choices[0].message.content
         print(f"Raw AI response content: {ai_response_content}")
         
-        # Try to remove markdown code block wrapper if present
+        # 응답에서 마크다운 코드 블록 래퍼를 먼저 제거합니다.
         json_string_to_parse = ai_response_content.strip()
         if json_string_to_parse.startswith("```json") and json_string_to_parse.endswith("```"):
             json_string_to_parse = json_string_to_parse[len("```json"):].strip()
             if json_string_to_parse.endswith("```"):
                 json_string_to_parse = json_string_to_parse[:-len("```")].strip()
 
-        print(f"Prepared JSON string for parsing: {json_string_to_parse}")
+        # 정규 표현식을 사용하여 가장 바깥쪽 JSON 객체 또는 배열을 찾습니다.
+        # 이 부분은 AI가 JSON 외의 다른 텍스트를 포함하는 경우를 처리하기 위함입니다.
+        json_match = re.search(r'(\{.*\}|\\[.*\\])', json_string_to_parse, re.DOTALL)
+        extracted_json_candidate = ""
+        if json_match:
+            extracted_json_candidate = json_match.group(0).strip()
+        else:
+            # JSON 객체를 찾지 못하면 원시 응답 전체를 JSON 파싱 후보로 사용 (기존 로직 유지)
+            extracted_json_candidate = json_string_to_parse
+
+        print(f"Prepared JSON string for parsing: {extracted_json_candidate}")
         
-        try:
-            parsed_response = json.loads(json_string_to_parse)
-            explanation = parsed_response.get("explanation", "")
-            code_suggestions = parsed_response.get("code_suggestions", [])
-        except json.JSONDecodeError as e:
-            print(f"JSON decoding error: {e}")
-            # If decoding fails, the explanation should indicate there was a parsing issue.
-            # We don't want to show the raw, invalid JSON to the user as "explanation".
-            explanation = f"AI 응답을 파싱하는 데 문제가 발생했습니다. 원시 응답: {ai_response_content}. 오류: {e}"
+        explanation = ""
+        code_suggestions = []
+
+        # 추출된 문자열이 JSON의 시작 문자로 시작하는지 확인하여 유효성을 검사합니다.
+        if extracted_json_candidate.startswith('{') or extracted_json_candidate.startswith('['):
+            try:
+                # JSON 파싱 시도
+                parsed_response = json.loads(extracted_json_candidate)
+                explanation = parsed_response.get("explanation", "")
+                code_suggestions = parsed_response.get("code_suggestions", [])
+
+            except json.JSONDecodeError as e:
+                print(f"JSON decoding error: {e}")
+                # JSON 디코딩 실패 시, 원시 응답을 explanation에 포함하고 code_suggestions는 빈 배열로 설정
+                explanation = f"AI 응답을 파싱하는 데 문제가 발생했습니다. 원시 응답:\n```\n{ai_response_content}\n```\n오류: {e}"
+                code_suggestions = []
+        else:
+            # 추출된 문자열이 JSON 형식이 아닌 경우: 전체 응답을 설명으로 사용하고 코드 제안은 없음
+            explanation = ai_response_content # 일반 텍스트는 그대로 사용
             code_suggestions = []
 
         return {"response": {"explanation": explanation, "code_suggestions": code_suggestions}}
