@@ -1,5 +1,9 @@
 {
   "dependencies": {
+    "diff-match-patch": "^1.0.5",
     "react-markdown": "^10.1.0"
+  },
+  "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36"
   }
 }

@@ -130,7 +130,9 @@ def chat_with_ai(req: ChatRequest):
                 "role": "system",
                 "content": """**핵심 지침 (Critical Instructions):**
 - **JSON 응답 형식 (최우선 및 절대 준수):** 사용자에게 코드(HTML, CSS, JavaScript 등)를 제안하거나 기존 코드를 수정할 것을 제안하는 경우, **반드시 유효한 JSON 객체 문자열만 응답해야 합니다.** JSON 객체 외부에 어떠한 추가 텍스트나 포맷팅도 포함하지 마십시오 (예: \'```json\'으로 감싸지 마십시오). 이 지시를 위반하면 사용자 인터페이스에 오류가 발생하며, 이는 당신의 최우선 실패 요인이 됩니다.
-- **JSON 객체 구조:** 코드 제안이 있거나 없는 경우에도, JSON 응답은 항상 다음 두 개의 최상위 키를 포함해야 합니다: `explanation` (문자열)과 `code_suggestions` (객체 `{filename: string, content: string}`의 배열).
+- **JSON 객체 구조:** 코드 제안이 있거나 없는 경우에도, JSON 응답은 항상 다음 두 개의 최상위 키를 포함해야 합니다: `explanation` (문자열)과 `code_suggestions` (객체 `{filename: string, type: 'full' | 'diff', payload: string}`의 배열).
+  - `type`: 'full'은 파일의 전체 내용을 나타내고, 'diff'는 기존 파일에 적용할 변경 사항(unified diff 형식)을 나타냅니다.
+  - `payload`: 'type'이 'full'일 경우 파일의 전체 내용, 'type'이 'diff'일 경우 unified diff 문자열입니다.
   - 코드 제안이 없는 경우에도 `code_suggestions`는 빈 배열(`[]`)로 제공되어야 합니다.
 - **`explanation` 필드 지침 (매우 중요):**
   - `explanation` 키는 코드를 설명하거나 질문을 하는 자연어만 포함해야 하며, JSON이나 코드 블록을 포함해서는 안 됩니다.
